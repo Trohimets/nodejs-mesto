@@ -1,4 +1,5 @@
 import { model, Schema } from 'mongoose';
+import { LINK_INCORRECT } from '../errors/constants';
 
 export interface ICard {
   name: string;
@@ -7,19 +8,6 @@ export interface ICard {
   likes: Schema.Types.ObjectId;
   createdAt: Date;
 }
-
-// const likeSchema = new Schema({
-//   card: {
-//     type: Schema.Types.ObjectId,
-//     ref: 'card',
-//     required: true
-//   },
-//   user: {
-//     type: Schema.Types.ObjectId,
-//     ref: 'user',
-//     required: true
-//   }
-// });
 
 const cardSchema = new Schema<ICard>({
   name: {
@@ -31,6 +19,13 @@ const cardSchema = new Schema<ICard>({
   link: {
     type: String,
     required: true,
+    validate: {
+      validator: (value: string) => {
+        const urlRegex = /^(ftp|http|https):\/\/[^ "]+$/;
+        return urlRegex.test(value);
+      },
+      message: LINK_INCORRECT,
+    },
   },
   owner: {
     type: Schema.Types.ObjectId,
@@ -46,13 +41,5 @@ const cardSchema = new Schema<ICard>({
     default: Date.now,
   },
 });
-
-// const Like = model('like', likeSchema);
-
-// cardSchema.virtual('likes', {
-//   ref: 'like',
-//   localField: '_id',
-//   foreignField: 'card'
-// });
 
 export default model<ICard>('card', cardSchema);

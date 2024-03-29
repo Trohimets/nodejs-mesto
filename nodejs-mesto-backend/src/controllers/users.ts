@@ -1,27 +1,63 @@
 import { NextFunction, Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import UnauthorizedError from '../errors/unauthozied';
+import {
+  MESSAGE_BAD_REQUEST_CREATE_USER,
+  MESSAGE_CONFLICT,
+  MESSAGE_NOT_FOUND_GET_USER,
+  MESSAGE_NOT_FOUND_UPDATE_AVATAR,
+  MESSAGE_SERVER_ERROR,
+  MESSAGE_UNAUTHORIZED,
+} from '../errors/constants';
 import User from '../models/user';
 import NotFoundError from '../errors/not-found-err';
+import ConflictError from '../errors/conflict';
+import ServerError from '../errors/server-error';
+import BadRequestError from '../errors/bad-request';
 
-export const getUsers = (req: Request, res: Response) => User.find({})
+require('dotenv').config();
+
+const { JWT_SECRET } = process.env;
+
+export const getUsers = (req: Request, res: Response, next: NextFunction) => User.find({})
   .then((users) => res.send({ data: users }))
-  .catch(() => res.status(500).send({ message: 'Произошла ошибка' }));
+  .catch(next);
 
-export const createUser = (req: Request, res: Response) => {
-  const { name, about, avatar } = req.body;
+export const createUser = (req: Request, res: Response, next: NextFunction) => {
+  const {
+    name,
+    about,
+    avatar,
+    email,
+    password,
+  } = req.body;
 
-  if (!name || !about || !avatar) {
-    return res.status(400).send({ message: 'Переданы некорректные данные при создании пользователя' });
-  }
-  return User.create({ name, about, avatar })
+  bcrypt.hash(password, 10)
+    .then((hash) => User.create({
+      name,
+      about,
+      avatar,
+      email,
+      password: hash,
+    }))
     .then((user) => res.send({ data: user }))
-    .catch(() => res.status(500).send({ message: 'Произошла ошибка' }));
+    .catch((err) => {
+      if (err.code === 11000) {
+        next(new ConflictError(MESSAGE_CONFLICT));
+      } else if (err.name === 'ValidationError') {
+        next(new BadRequestError(MESSAGE_BAD_REQUEST_CREATE_USER));
+      } else {
+        next(new ServerError(MESSAGE_SERVER_ERROR));
+      }
+    });
 };
 
 export const getOneUser = (req: Request, res: Response, next: NextFunction) => {
   User.findById(req.params.userId)
     .then((user) => {
       if (!user) {
-        throw new NotFoundError('Пользователь по указанному _id не найден');
+        throw new NotFoundError(MESSAGE_NOT_FOUND_GET_USER);
       } else {
         res.send({ data: user });
       }
@@ -31,13 +67,11 @@ export const getOneUser = (req: Request, res: Response, next: NextFunction) => {
 
 export const updateProfile = (req: Request, res: Response, next: NextFunction) => {
   const { name, about } = req.body;
-  if (!name || !about) {
-    return res.status(400).send({ message: 'Переданы некорректные данные при обновлении профиля' });
-  }
-  return User.findByIdAndUpdate(req.user._id, { name, about }, { new: true })
+
+  return User.findByIdAndUpdate(req.user._id, { name, about }, { new: true, runValidators: true })
     .then((user) => {
       if (!user) {
-        throw new NotFoundError('Пользователь с указанным _id не найден');
+        throw new NotFoundError(MESSAGE_NOT_FOUND_GET_USER);
       } else {
         res.send({ data: user });
       }
@@ -47,13 +81,46 @@ export const updateProfile = (req: Request, res: Response, next: NextFunction) =
 
 export const updateAvatar = (req: Request, res: Response, next: NextFunction) => {
   const { avatar } = req.body;
-  if (!avatar) {
-    return res.status(400).send({ message: 'Переданы некорректные данные при обновлении аватара' });
-  }
-  return User.findByIdAndUpdate(req.user._id, { avatar }, { new: true })
+
+  return User.findByIdAndUpdate(req.user._id, { avatar }, { new: true, runValidators: true })
     .then((user) => {
       if (!user) {
-        throw new NotFoundError('Пользователь с указанным _id не найден');
+        throw new NotFoundError(MESSAGE_NOT_FOUND_UPDATE_AVATAR);
+      } else {
+        res.send({ data: user });
+      }
+    })
+    .catch(next);
+};
+
+export const login = (req: Request, res: Response, next: NextFunction) => {
+  const { email, password } = req.body;
+  let foundUser: any;
+
+  User.findOne({ email }).select('password')
+    .then((user) => {
+      foundUser = user;
+      if (!user) {
+        return Promise.reject(new UnauthorizedError(MESSAGE_UNAUTHORIZED));
+      }
+      return bcrypt.compare(password, user.password);
+    })
+    // eslint-disable-next-line consistent-return
+    .then((matched) => {
+      if (!matched) {
+        return Promise.reject(new UnauthorizedError(MESSAGE_UNAUTHORIZED));
+      }
+      const token = jwt.sign({ _id: foundUser._id }, JWT_SECRET || 'my-secret-key', { expiresIn: '1h' });
+      res.send({ token });
+    })
+    .catch(next);
+};
+
+export const getProfile = (req: Request, res: Response, next: NextFunction) => {
+  User.findById(req.user._id)
+    .then((user) => {
+      if (!user) {
+        throw new NotFoundError(MESSAGE_NOT_FOUND_GET_USER);
       } else {
         res.send({ data: user });
       }
